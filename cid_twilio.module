@@ -1,0 +1,171 @@
+<?php 
+/*
+* @file cid_twilio.module
+* 
+*/
+
+//Define twilio variables
+define('CID_TWILIO_DEFAULT_ACCOUNT_SID', '');
+define('CID_TWILIO_DEFAULT_AUTH_TOKEN', '');
+define('CID_TWILIO_DEFAULT_DEBUG_MODE', 1 );
+/*
+** Implement hook_menu()
+*/
+function cid_twilio_menu(){
+	$items = array();
+	$items['admin/config/services/cidtwilio'] = array(
+		'title' => t('CID Twilio API settings'),
+		'description' => t('Settings for Custom Twilio API'), 
+		'page callback' => 'drupal_get_form', 
+		'page arguments' => array('cid_twilio_admin_form'),
+		'access arguments' => array('administer cid_twilio'), 
+		'file' => 'cid_twilio.admin.inc',
+	);
+    $items['viewtext'] = array(
+        'title' => t('View CID Twilio Texts'), 
+        'description' => t('View all exisiting CID Twilio Texts'), 
+        'page callback' => 'cid_twilio_execute', 
+        'access arguments' => array('administer cid_twilio'),
+        'type' => MENU_CALLBACK,
+    );
+	
+	return $items;
+}
+
+/**
+* Implement hook_permission()
+**/
+
+function cid_twilio_permission(){
+	return array(
+		'administer cid_twilio' => array(
+			'title' => t('Administer CID Twilio'),
+		),
+	);
+}
+
+/** 
+* Implement hook_cron()
+* Comment out to stop cron run update of Text Messages
+**/
+function cid_twilio_cron(){ 
+  	
+  	watchdog('cid twilio', 'Twilio Refresh Begin');
+   	cid_twilio_execute();
+   	//watchdog('cid twilio', 'Twilio Refresh Complete');
+
+}
+
+/***
+* HTTP Request
+**/
+ function cid_twilio_execute(){
+        // this loads the library 
+        require('sites/all/libraries/twilio/Services/Twilio.php'); 
+        
+        //get account information from variables
+        $account_sid =  variable_get('cid_twilio_account_sid', CID_TWILIO_DEFAULT_ACCOUNT_SID);
+		$auth_token = variable_get('cid_twilio_auth_token', CID_TWILIO_DEFAULT_AUTH_TOKEN); 
+        $client = new Services_Twilio($account_sid, $auth_token); 
+		
+		
+        $messages = $client->account->messages->getIterator(0, 50, array(   
+        )); 
+        
+		//build the query to check if SID already exists in the database
+  		$efq = new EntityFieldQuery();
+  		$efq->entityCondition('entity_type', 'node')
+  			->entityCondition('bundle', 'text_message');
+		$result = $efq->execute();
+		$options = array();
+		
+		if (isset($result['node'])) {
+  		foreach (node_load_multiple(array_keys($result['node'])) as $nid => $node) {
+   			 $options[$nid] = $node->field_sms_id['und'][0]['value'];
+  			}
+		}
+		//for dev
+		//dpm($options);
+    	
+    	
+       foreach($messages as $message){
+       	
+    		$text_body = '';
+    		$text_date = '';
+    		$text_sms = '';
+    		$text_status = '';
+    		$text_body = check_plain($message->body);
+    		$text_date = $message->date_sent;
+    		$text_incoming = $message->direction; 
+    		$text_sms = check_plain($message->sid);
+    		
+    		if ((in_array($text_sms, $options)) && ($text_incoming == "inbound")){
+    			
+    			$text_status = 'Not Created';
+    			//for dev 
+    			//dpm('Node exists, not created');
+    		}
+    		if ((!in_array($text_sms, $options)) && ($text_incoming == "inbound")){
+        		$node = new stdClass();
+				$node->type = 'text_message';
+				$node->title = $text_body;
+				$node->language = LANGUAGE_NONE;
+				node_object_prepare($node);    
+				$node->field_text_message[$node->language][0]['value'] = $text_body;
+    		
+				$my_date = new DateTime($text_date);
+				$node->field_date_sent[$node->language][0] = array(
+  				 	'value' => date_format($my_date, "Y-m-d H:i:s"),
+  				 	'timezone' => 'UTC',
+   				 	'timezone_db' => 'UTC',
+ 				);
+   			
+				$node->field_sms_id[$node->language][0]['value'] = $text_sms;
+				global $user;
+  				$node->uid = $user->uid;
+  				$node->name = $user->name;
+  				$node->format = 3;     // 1 means filtered html, 2 means full html, 3 is php
+  				$node->status = 1;     // 1 means published
+  				$node->promote = 0;    // 1 means promoted to front page
+  			
+  				$node = node_submit( $node );
+  				//$node = node_validate($form_state['values'], $form);
+  				
+  				//for dev
+  				//dpm('New node successfully created');
+				node_save( $node );
+				
+			}
+			
+		}
+		
+		/*if($node = node_save($node)){
+			//comment or alter to troubleshoot functions
+		}
+		if($text_status = 'Not Created'){
+			//comment or alter to troubleshoot functions
+		}
+		*/
+		watchdog('cid twilio', 'cid twilio execute function complete');
+	
+}
+		
+/**
+ * Implementation of hook_menu_alter().
+ * Remember to clear the menu cache after adding/editing this function.
+ * Removing to remove any issues/conflict with UI in editing mode for text_message cck
+ */
+
+function cid_twilio_menu_alter(&$items) { 
+      $items['node/%node/view']['access callback'] = 'cid_twilio_disable_node_view';
+      $items['node/%node/view']['access arguments'] = array(1); 
+    } 
+
+    function cid_twilio_disable_node_view($node){
+      if($node->type == 'text_message'){
+        return false;
+      }
+}
+    
+
+

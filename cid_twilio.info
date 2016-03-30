@@ -1,0 +1,14 @@
+name = CID Twilio
+description = Creates a nodes from 3rd party twilio data, dependent on twilio PHP library
+core = 7.x 
+
+;CORE 
+dependencies[] = menu
+
+;CONTRIBUTED
+dependencies[] = ctools
+dependencies[] = devel
+dependencies[] = entity
+
+;FILES
+files[] = cid_twilio.admin.inc
